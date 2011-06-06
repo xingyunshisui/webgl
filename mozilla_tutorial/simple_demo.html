@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <!-- 其中3D空间坐标转换与光照计算将会被顶点着色器（Vertex Shader）代替，
+      而其余部分将由片段着色器（Fragment Shader，又称Pixel Shader）所取代。
+      http://dzovrw360.blog.163.com/blog/static/171375045201091322026552/
+   -->
+  <!-- 多边形中的每一个像素在 GL 术语中叫一个 fragment -->
+  <!-- 碎片渲染器的作用是为每一个像素建立颜色 -->
+  <!-- gl_FragColor 是 GL 中的内建变量，用来设置 fragment color -->
+  <script id="shader-fs" type="x-shader/x-fragment">
+    void main(void) {
+      gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+    }
+  </script>
+  <!-- 顶点渲染器为每一个顶点定义位置和形状 -->
+  <script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    
+    void main(void) {
+      gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+    }
+  </script>
+
+</head>
+<body>
+<canvas id="webgl-canvas" width="640" height="480" ></canvas>
+<script src="sylvester.src.js"></script>
+<script src="glUtils.js"></script>
+<script>
+  var canvas = document.getElementById('webgl-canvas');
+  var gl = canvas.getContext("experimental-webgl");
+
+  function initCanvas() {
+    if (gl) {
+      // 使用指定的 rgba 清空 color buffer：黑色不透明
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      
+      // Clear depth buffer, what's depth?
+      gl.clearDepth(1.0);
+
+      // 开启深度测试
+      gl.enable(gl.DEPTH_TEST);
+
+      // Near things obscure(使模糊) far things.
+      // The depth buffer test passes less than or equal to the depth
+      // value stored at the location given by the incoming fragment’s (xw; yw)
+      // coordinates.
+      gl.depthFunc(gl.LEQUAL);
+    }
+  }
+
+  // 初始化渲染器
+  function initShaders() {
+    // 创建并获取片段渲染器和顶点渲染器
+    var fragmentShader = getShader(gl, "shader-fs");
+    var vertexShader = getShader(gl, "shader-vs");
+
+    // The shader objects that are to be used by the programmable stages of the
+    // GL are collected together to form a program object. The programs that are
+    // executed by these programmable stages are called executables. All
+    // information necessary for deﬁning an executable is encapsulated in a
+    // program object.
+    shaderProgram = gl.createProgram();
+
+    // 把顶点渲染器附在创建的 shaderProgram 上
+    // 一个 shaderProgram 不能 attach 相同类型的 shader
+    // 一个 shaderProgram 必须包含 vertex shader 和 fragment shader.
+    gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(shaderProgram, fragmentShader);
+
+    // In order to use the shader objects contained in a program object, the
+    // program object must be linked.
+    gl.linkProgram(shaderProgram);
+
+    // If creating the shader program failed, alert
+    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+      alert("Unable to initialize the shader program.");
+    }
+
+    // If a valid executable is created, it can be made part of the current
+    // rendering state with the command void UseProgram( uint program );
+    // This command will install the executable code as part of current
+    // rendering state if the program object program contains valid executable
+    // code, i.e. has been linked successfully.
+    gl.useProgram(shaderProgram);
+
+    vertexPositionAttribute =
+      gl.getAttribLocation(shaderProgram, "aVertexPosition");
+    gl.enableVertexAttribArray(vertexPositionAttribute);
+  }
+  
+  function getShader(gl, id) {
+    var shaderScript = document.getElementById(id);
+    if (!shaderScript) {
+      return null;
+    }
+
+    // 获取渲染器源码：shading language
+    var theSource = "";
+    var currentChild = shaderScript.firstChild;
+    while (currentChild) {
+      if (currentChild.nodeType == 3) {
+        theSource += currentChild.textContent;
+      }
+      currentChild = currentChild.nextSibling;
+    }
+    var shader;
+
+    // 根据 mime type 区分渲染类型并创建渲染器
+    if (shaderScript.type == "x-shader/x-fragment") {
+      shader = gl.createShader(gl.FRAGMENT_SHADER);
+    } else if (shaderScript.type == "x-shader/x-vertex") {
+      shader = gl.createShader(gl.VERTEX_SHADER);
+    } else {
+      return null;  // Unknown shader type
+    }
+
+    // 加载源码
+    gl.shaderSource(shader, theSource);
+
+    // Compile the shader program
+    gl.compileShader(shader);
+
+    // See if it compiled successfully
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      alert("渲染器编译失败：" + gl.getShaderInfoLog(shader));
+      return null;
+    }
+    return shader;
+  }
+
+  // 创建保存图形顶点的数据缓存
+  function initBuffers() {
+    // 创建 buffer
+    var squareVerticesBuffer = gl.createBuffer();
+
+    // 以指定类型绑定 buffer 到 context
+    gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
+
+    // 创建 4 个顶点
+    var vertices = [
+      1.0,  1.0,  0.5, // x, y, z
+      -1.0, 1.0,  0.1,
+      1.0,  -1.0, 0.3,
+      -1.0, -1.0, 0.4
+    ];
+
+    // 将数据添加到 buffer 中
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+
+    return squareVerticesBuffer;
+  }
+
+  // 渲染场景
+  function drawScene(squareVerticesBuffer) {
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    var perspectiveMatrix = makePerspective(45, 640.0/480.0, 0.1, 100.0);
+
+    loadIdentity();
+    mvTranslate([-0.0, 0.0, -6.0]);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
+    gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+    setMatrixUniforms(perspectiveMatrix);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  // Util functions.
+  function loadIdentity() {
+    mvMatrix = Matrix.I(4);
+  }
+
+  function multMatrix(m) {
+    mvMatrix = mvMatrix.x(m);
+  }
+
+  function mvTranslate(v) {
+    multMatrix(Matrix.Translation($V([v[0], v[1], v[2]])).ensure4x4());
+  }
+
+  function setMatrixUniforms(perspectiveMatrix) {
+    var pUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+    gl.uniformMatrix4fv(pUniform, false,
+        new Float32Array(perspectiveMatrix.flatten()));
+
+    var mvUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+    gl.uniformMatrix4fv(mvUniform, false, new Float32Array(mvMatrix.flatten()));
+  }
+
+  window.addEventListener('load', function() {
+    initCanvas();
+    initShaders();
+    var squareVerticesBuffer = initBuffers();
+    //setInterval(function() {
+      drawScene(squareVerticesBuffer);
+    //}, 15);
+  }, false);
+</script>
+</body>
+</html>
