@@ -2,6 +2,11 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <style>
+    body {
+      
+    }
+  </style>
   <!-- 其中3D空间坐标转换与光照计算将会被顶点着色器（Vertex Shader）代替，
       而其余部分将由片段着色器（Fragment Shader，又称Pixel Shader）所取代。
       http://dzovrw360.blog.163.com/blog/static/171375045201091322026552/
@@ -10,19 +15,33 @@
   <!-- 碎片渲染器的作用是为每一个像素建立颜色 -->
   <!-- gl_FragColor 是 GL 中的内建变量，用来设置 fragment color -->
   <script id="shader-fs" type="x-shader/x-fragment">
+    varying lowp vec4 vColor;
     void main(void) {
-      gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+      //gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0); // 设置为rgba 白色
+      gl_FragColor = vColor; // 从 vColor 中提取颜色来渲染 fragment
     }
   </script>
   
   <!-- 顶点渲染器为每一个顶点定义位置和形状 -->
   <script id="shader-vs" type="x-shader/x-vertex">
+    // aVertexPosition 对应于 createBuffers 中：
+    // gl.getAttribLocation(shaderProgram, "aVertexPosition");
+    // 的第二个参数，aVertexColor 同。
     attribute vec3 aVertexPosition;
+    attribute vec4 aVertexColor;
+
+    // uMVMatrix 对应于 setMatrixUniforms 中的：
+    // gl.getUniformLocation(shaderProgram, "uMVMatrix");
     uniform mat4 uMVMatrix;
     uniform mat4 uPMatrix;
-    
+
+    varying lowp vec4 vColor;
+
     void main(void) {
       gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+      // For each vertex, we set its color to the corresponding value from the
+      // color array defined in function createBuffer.
+      vColor = aVertexColor;
     }
   </script>
 
@@ -32,10 +51,9 @@
 <script src="sylvester.src.js"></script>
 <script src="glUtils.js"></script>
 <script>
-  var canvas = document.getElementById('webgl-canvas');
-  var gl = canvas.getContext("experimental-webgl");
-
   function initCanvas() {
+    var canvas = document.getElementById('webgl-canvas');
+    var gl = canvas.getContext("experimental-webgl");
     if (gl) {
       // 使用指定的 rgba 清空 color buffer：黑色不透明
       gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -51,20 +69,25 @@
       // value stored at the location given by the incoming fragment’s (xw; yw)
       // coordinates.
       gl.depthFunc(gl.LEQUAL);
+
+      return gl;
     }
+
+    return null;
   }
 
   // 初始化渲染器
-  function initShaders() {
+  function initShaders(gl) {
     // 创建并获取片段渲染器和顶点渲染器
-    var fragmentShader = getShader(gl, "shader-fs");
-    var vertexShader = getShader(gl, "shader-vs");
+    var fragmentShader = createShader(gl, "shader-fs");
+    var vertexShader = createShader(gl, "shader-vs");
 
     // The shader objects that are to be used by the programmable stages of the
     // GL are collected together to form a program object. The programs that are
     // executed by these programmable stages are called executables. All
     // information necessary for deﬁning an executable is encapsulated in a
     // program object.
+    // 创建 shader program，用来操作 shader
     shaderProgram = gl.createProgram();
 
     // 把顶点渲染器附在创建的 shaderProgram 上
@@ -89,26 +112,29 @@
     // code, i.e. has been linked successfully.
     gl.useProgram(shaderProgram);
 
-    vertexPositionAttribute =
+    var vertexPositionAttribute =
       gl.getAttribLocation(shaderProgram, "aVertexPosition");
     gl.enableVertexAttribArray(vertexPositionAttribute);
+
+    var vertexColorAttribute = gl.getAttribLocation(shaderProgram,
+      "aVertexColor");
+    gl.enableVertexAttribArray(vertexColorAttribute);
+
+    return {
+      positionAttribute: vertexPositionAttribute,
+      colorAttribute: vertexColorAttribute
+    };
   }
-  
-  function getShader(gl, id) {
-    var shaderScript = document.getElementById(id);
+
+  // 创建并返回渲染器
+  function createShader(gl, type) {
+    var shaderScript = document.getElementById(type);
     if (!shaderScript) {
       return null;
     }
 
     // 获取渲染器源码：shading language
-    var theSource = "";
-    var currentChild = shaderScript.firstChild;
-    while (currentChild) {
-      if (currentChild.nodeType == 3) {
-        theSource += currentChild.textContent;
-      }
-      currentChild = currentChild.nextSibling;
-    }
+    var theSource = shaderScript.innerText;
     var shader;
 
     // 根据 mime type 区分渲染类型并创建渲染器
@@ -135,42 +161,74 @@
   }
 
   // 创建保存图形顶点的数据缓存
-  function initBuffers() {
-    // 创建 buffer
-    var squareVerticesBuffer = gl.createBuffer();
-
-    // 以指定类型绑定 buffer 到 context
-    gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
-
-    // 创建 4 个顶点
+  function createBuffers(gl) {
+    // 创建两个 buffer，用来保存顶点位置及颜色
+    var squareVerticesPositionBuffer = gl.createBuffer();
+    var squareVerticesColorBuffer = gl.createBuffer();
+    
+    // 创建 4 个包含位置的顶点，四个顶点围成一个正方形
     var vertices = [
-      1.0,  1.0,  0.5, // x, y, z
-      -1.0, 1.0,  0.1,
-      1.0,  -1.0, 0.3,
-      -1.0, -1.0, 0.4
+      1.0,  1.0,  0.0, // x, y, z，右上角
+      -1.0, 1.0,  0.0, // 左上角
+      1.0,  -1.0, 0.0, // 左下角
+      -1.0, -1.0, 0.0 // 右下角
     ];
-
+    
+    // 以指定类型绑定 buffer 到 context
+    gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesPositionBuffer);
     // 将数据添加到 buffer 中
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
 
-    return squareVerticesBuffer;
+    // 为 4 个顶点添加颜色
+    var colors = [
+      1.0,  1.0,  1.0,  1.0,    // white, rgba?
+      1.0,  0.0,  0.0,  1.0,    // red
+      0.0,  1.0,  0.0,  1.0,    // green
+      0.0,  0.0,  1.0,  1.0     // blue
+    ];
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesColorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+
+    return {
+      positionBuffer: squareVerticesPositionBuffer,
+      colorBuffer: squareVerticesColorBuffer
+    };
   }
 
   // 渲染场景
-  function drawScene(squareVerticesBuffer) {
+  function drawScene(gl, buffers, attributes) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+    // 建立相机远景，45°视角，640/480 的宽高比，z 轴从 1 到 100 个单位内才被渲染
     var perspectiveMatrix = makePerspective(45, 640.0/480.0, 0.1, 100.0);
 
     loadIdentity();
     mvTranslate([-0.0, 0.0, -6.0]);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBuffer);
-    gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
-    setMatrixUniforms(perspectiveMatrix);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.positionBuffer);
+    gl.vertexAttribPointer(attributes.positionAttribute, 3, gl.FLOAT, false, 0, 0);
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.colorBuffer);
+    gl.vertexAttribPointer(attributes.colorAttribute, 4, gl.FLOAT, false, 0, 0);
+    
+    setMatrixUniforms(gl, perspectiveMatrix);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
+  window.addEventListener('load', function() {
+    var gl = initCanvas();
+    if (gl) {
+      var attributes = initShaders(gl);
+      var buffers = createBuffers(gl);
+      setInterval(function() {
+        drawScene(gl, buffers, attributes);
+      }, 15);
+    }
+  }, false);
+</script>
+
+<script>
   // Util functions.
   function loadIdentity() {
     mvMatrix = Matrix.I(4);
@@ -184,7 +242,7 @@
     multMatrix(Matrix.Translation($V([v[0], v[1], v[2]])).ensure4x4());
   }
 
-  function setMatrixUniforms(perspectiveMatrix) {
+  function setMatrixUniforms(gl, perspectiveMatrix) {
     var pUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
     gl.uniformMatrix4fv(pUniform, false,
         new Float32Array(perspectiveMatrix.flatten()));
@@ -192,15 +250,6 @@
     var mvUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
     gl.uniformMatrix4fv(mvUniform, false, new Float32Array(mvMatrix.flatten()));
   }
-
-  window.addEventListener('load', function() {
-    initCanvas();
-    initShaders();
-    var squareVerticesBuffer = initBuffers();
-    //setInterval(function() {
-      drawScene(squareVerticesBuffer);
-    //}, 15);
-  }, false);
 </script>
 </body>
 </html>
